@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>课程表</title>
+<meta name="description" content="自用课程表：支持从学教一体化等教务系统导入课表，周次/单双周/教室/教师一屏看清。">
+<meta name="theme-color" content="#4f7cff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="课程表">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="assets/icons/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <button class="icon-btn" id="btnSettings" aria-label="设置">⚙</button>
+    <div class="week-nav">
+      <button class="arrow" id="btnPrevWeek" aria-label="上一周">‹</button>
+      <button class="week-label" id="btnWeekLabel" title="点击回到本周">
+        <b><span id="weekNum">第 1 周</span><span class="cur-tag" id="curTag" hidden>本周</span></b>
+        <small id="weekRange">—</small>
+      </button>
+      <button class="arrow" id="btnNextWeek" aria-label="下一周">›</button>
+    </div>
+    <button class="icon-btn" id="btnImport" aria-label="导入 / 添加课程">＋</button>
+  </header>
+
+  <nav class="day-strip" id="dayStrip" aria-label="选择星期"></nav>
+
+  <main class="main" id="main">
+    <section class="view" id="dayView"></section>
+    <section class="view" id="weekView" hidden></section>
+  </main>
+
+  <footer class="tabbar">
+    <button class="tab active" data-view="day"><i>☰</i><span>日视图</span></button>
+    <button class="tab" data-view="week"><i>▦</i><span>周课表</span></button>
+    <button class="tab" id="btnToday"><i>◉</i><span>回到今天</span></button>
+  </footer>
+</div>
+
+<div class="sheet-mask" id="mask"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="面板"></div>
+<div class="toast" id="toast"></div>
+
+<script src="assets/parser.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

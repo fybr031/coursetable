@@ -1,0 +1,13 @@
+# 本地临时文件
+.tmp*
+*.log
+
+# 令牌 / 密钥（防止误提交）
+*.token
+gh-token.txt
+.env
+
+# 系统文件
+Thumbs.db
+desktop.ini
+.DS_Store
