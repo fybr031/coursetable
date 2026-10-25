@@ -192,4 +192,4 @@ node tools/serve.mjs 8080
 
 改了 `assets/` 里的文件后记得跑一次 `node tools/build.mjs`，否则 `dist/课程表.html` 还是旧的。
 
-版本 v1.0.0
+版本 v1.1.0（新增 PDF 课表导入）
