@@ -1565,6 +1565,17 @@ input, select, textarea { font: inherit; color: inherit; }
     return { cols: cols, bounds: bounds, headerY: head[0].y };
   }
 
+  /** 判断碎片文本是不是「上一格详情的尾巴」而不是「下一格的课程名开头」 */
+  function looksLikeDetailTail(text) {
+    var t = (text || '').trim();
+    if (!t) return true;
+    if (/^\//.test(t)) return true;                                   // /场地:…
+    if (/(校区|场地|教师|教学班|选课备注|课备注):/.test(t)) return true; // 任何详情字段
+    if (/^(注:|班:|组成:|学班|学组成|教学班)/.test(t)) return true;     // 续行常见开头
+    if (/\/$/.test(t)) return true;                                   // 以 / 结尾 = 被截断的详情
+    return false;
+  }
+
   /** 按行距切分单元格块 */
   function splitBlocks(list) {
     var blocks = [];
@@ -1580,19 +1591,25 @@ input, select, textarea { font: inherit; color: inherit; }
       prev = it;
     }
     if (cur.length) blocks.push(cur);
-    // 没有 (x-y节) 的碎片并到下一块（名字折行、续页首行等）
+
+    // 没有 (x-y节) 的碎片：详情尾巴并回「上一块」，名字碎片挂到「下一块」
     var out = [];
-    var carry = null;
+    var pending = null;
     for (var b = 0; b < blocks.length; b++) {
       var joined = blocks[b].map(function (x) { return x.text; }).join('');
-      if (!/\(\d{1,2}-\d{1,2}节\)/.test(joined)) {
-        carry = carry ? carry.concat(blocks[b]) : blocks[b];
-        continue;
+      if (/\(\d{1,2}-\d{1,2}节\)/.test(joined)) {
+        out.push(pending ? pending.concat(blocks[b]) : blocks[b]);
+        pending = null;
+      } else if (looksLikeDetailTail(joined) && out.length) {
+        out[out.length - 1] = out[out.length - 1].concat(blocks[b]);
+      } else {
+        pending = pending ? pending.concat(blocks[b]) : blocks[b];
       }
-      out.push(carry ? carry.concat(blocks[b]) : blocks[b]);
-      carry = null;
     }
-    if (carry) out.push(carry);
+    if (pending) {
+      if (out.length) out[out.length - 1] = out[out.length - 1].concat(pending);
+      else out.push(pending);
+    }
     return out;
   }
 
@@ -1620,8 +1637,14 @@ input, select, textarea { font: inherit; color: inherit; }
     var slotM = /\((\d{1,2})\s*-\s*(\d{1,2})节\)/.exec(raw);
     if (!slotM) return null;
     var name = raw.slice(0, slotM.index).trim();
+    // 兜底：如果课程名里混进了详情字段（块拼接不完美时），取最后一个 : 或 / 之后的部分
+    if (/^\/|(校区|场地|教师|教学班|选课备注|课备注):/.test(name)) {
+      var cut = Math.max(name.lastIndexOf(':'), name.lastIndexOf('/'));
+      if (cut >= 0) name = name.slice(cut + 1).trim();
+    }
     name = name.replace(/^[/:]+/, '').replace(/[○*※☆●◆]+$/, '').trim();
     if (!name) return null;
+    if (/^(注|备注)$/.test(name)) return null;
 
     var after = raw.slice(slotM.index + slotM[0].length);
     var weekPart = (after.split('/')[0] || '').trim();

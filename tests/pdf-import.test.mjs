@@ -94,7 +94,15 @@ const ITEMS = [
   item(2, 565.5, '班级1班;测试班级2班/选课备注:', 2, 8),
 
   // 周三：单行（名字与详情同一行，无折行）
-  item(3, 505.5, '体育(7-8节)2周/校区:主校区/场地:体育馆/教师:赵六/选课备注:', 1, 9)
+  item(3, 505.5, '体育(7-8节)2周/校区:主校区/场地:体育馆/教师:赵六/选课备注:', 1, 9),
+
+  // 周四：回归用例 —— 单元格被拆开时，「上一格的详情尾巴」必须并回上一格，
+  // 不能接到下一格的课程名前面（曾出现「2班/选课备注:内科学C」这种脏名字）
+  item(4, 505.5, '外科学C', 1, 9),
+  item(4, 493.5, '(1-2节)3周/校区:主校区/场地:C301/教师:甲', 1, 8),
+  item(4, 470.0, '2班/选课备注:', 1, 8),           // 尾巴碎片（行距 23.5 → 会被切开）
+  item(4, 450.0, '内科学C', 1, 9),                  // 下一门课的名字
+  item(4, 438.0, '(3-4节)3周/校区:主校区/场地:C302/教师:乙', 1, 8)
 ];
 
 test('文字项 → 课程：列归属、块切分、跨页续行、过滤标题', () => {
@@ -107,7 +115,7 @@ test('文字项 → 课程：列归属、块切分、跨页续行、过滤标题
   assert.equal(byName['测试同学课表'], undefined);
   assert.ok(!res.courses.some((c) => /学号/.test(c.name)), '学号行不该成为课程');
 
-  assert.equal(res.courses.length, 4, '应有 4 门课，实际：' + res.courses.map((c) => c.name).join(','));
+  assert.equal(res.courses.length, 6, '应有 6 门课，实际：' + res.courses.map((c) => c.name).join(','));
 
   const math = byName['高等数学'];
   assert.equal(math.day, 1);
@@ -134,6 +142,15 @@ test('文字项 → 课程：列归属、块切分、跨页续行、过滤标题
   assert.equal(pe.day, 3);
   assert.deepEqual(pe.weeks, [2]);
   assert.equal(pe.room, '体育馆');
+
+  // 回归：尾巴碎片不能污染下一门课的名字
+  assert.ok(byName['外科学C'], '应有 外科学C，实际：' + res.courses.map((c) => c.name).join(','));
+  assert.ok(byName['内科学C'], '应有 内科学C，实际：' + res.courses.map((c) => c.name).join(','));
+  assert.equal(byName['外科学C'].room, 'C301');
+  assert.equal(byName['内科学C'].room, 'C302');
+  res.courses.forEach((c) => {
+    assert.ok(!/[:/]/.test(c.name), '课程名不该含 : 或 /，实际：' + c.name);
+  });
 });
 
 test('没有课的 PDF：明确失败而不是瞎解析', () => {
