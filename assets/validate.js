@@ -30,7 +30,8 @@
       if (/[:：\/]/.test(name)) reasons.push('课程名含「:」或「/」，疑似解析错位');
       if (DETAIL_WORDS.test(name)) reasons.push('课程名混入了教师/场地等字段');
       if (LEADING_JUNK.test(name)) reasons.push('课程名以「注/组成」等开头，疑似被截断');
-      if (/^[\d\W]+$/.test(name)) reasons.push('课程名缺少文字');
+      // 注意：JS 正则里中文属于 \W，不能用 \W 判断，必须用汉字/字母白名单
+      if (!/[\u4e00-\u9fa5A-Za-z]/.test(name)) reasons.push('课程名里没有文字内容');
     }
 
     if (!String(c.teacher || '').trim() && !String(c.room || '').trim()) {
@@ -62,8 +63,14 @@
    */
   function detectConflicts(list, maxWeek) {
     maxWeek = maxWeek || 20;
-    var out = {};
+    // 先按「与哪门课冲突」聚合周次，避免同一条课程刷出十几条原因
+    var acc = {};   // id -> { 课程名: { 周: true } }
     var n = list.length;
+    function addWeek(id, name, w) {
+      if (!acc[id]) acc[id] = {};
+      if (!acc[id][name]) acc[id][name] = {};
+      acc[id][name][w] = true;
+    }
     for (var i = 0; i < n; i++) {
       for (var j = i + 1; j < n; j++) {
         var a = list[i], b = list[j];
@@ -71,16 +78,25 @@
         if (a.start > b.end || b.start > a.end) continue;   // 节次不重叠
 
         var sa = weekSet(a, maxWeek), sb = weekSet(b, maxWeek);
-        var weeks = [];
-        for (var w in sa) { if (sb[w]) weeks.push(+w); }
-        if (!weeks.length) continue;
-        weeks.sort(function (x, y) { return x - y; });
-
-        var short = weeks.length > 4 ? (weeks.slice(0, 4).join('、') + ' 等 ' + weeks.length + ' 周') : (weeks.join('、') + ' 周');
-        (out[a.id] = out[a.id] || []).push('与「' + b.name + '」时间冲突（第 ' + short + '）');
-        (out[b.id] = out[b.id] || []).push('与「' + a.name + '」时间冲突（第 ' + short + '）');
+        for (var w in sa) {
+          if (!sb[w]) continue;
+          addWeek(a.id, b.name, +w);
+          addWeek(b.id, a.name, +w);
+        }
       }
     }
+    var out = {};
+    Object.keys(acc).forEach(function (id) {
+      var reasons = [];
+      Object.keys(acc[id]).forEach(function (name) {
+        var weeks = Object.keys(acc[id][name]).map(Number).sort(function (x, y) { return x - y; });
+        var short = weeks.length > 4
+          ? (weeks.slice(0, 4).join('、') + ' 等 ' + weeks.length + ' 周')
+          : (weeks.join('、') + ' 周');
+        reasons.push('与「' + name + '」时间冲突（第 ' + short + '）');
+      });
+      out[id] = reasons;
+    });
     return out;
   }
 
@@ -99,6 +115,9 @@
       if (suspect) reasons = reasons.concat(suspect);
       if (conflict.length) reasons = reasons.concat(conflict);
       if (!reasons.length) return;
+      if (reasons.length > 5) {
+        reasons = reasons.slice(0, 4).concat(['…另有 ' + (reasons.length - 4) + ' 条问题（点「编辑」可逐条核对）']);
+      }
       result[c.id] = {
         kind: suspect && conflict.length ? 'both' : (conflict.length ? 'conflict' : 'suspect'),
         reasons: reasons
