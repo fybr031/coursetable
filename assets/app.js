@@ -551,13 +551,25 @@
 
   function importSheetHtml(tab) {
     var tabs = '<div class="import-tabs">' +
+      '<button data-tab="pdf" class="' + (tab === 'pdf' ? 'on' : '') + '">PDF 课表</button>' +
       '<button data-tab="paste" class="' + (tab === 'paste' ? 'on' : '') + '">粘贴导入</button>' +
       '<button data-tab="file" class="' + (tab === 'file' ? 'on' : '') + '">文件导入</button>' +
       '<button data-tab="bookmark" class="' + (tab === 'bookmark' ? 'on' : '') + '">书签抓取</button>' +
       '</div>';
 
     var body = '';
-    if (tab === 'paste') {
+    if (tab === 'pdf') {
+      body =
+        '<div class="tip"><b>用学校导出的课表 PDF 直接导入：</b><ol>' +
+        '<li>在「学教一体化」里导出课表 PDF（手机或电脑导出都行）；</li>' +
+        '<li>把 PDF 传到手机（微信/QQ 发给自己），点下面的「选择课表 PDF」；</li>' +
+        '<li>解析完先核对预览，没问题再点「替换全部」。</li></ol>' +
+        '<div style="margin-top:8px">PDF <b>只在这台设备上解析，不会上传</b>；课表按「每次上课」逐条导入，' +
+        '所以每周看到的教师和地点都是当周真实的。</div></div>' +
+        '<div class="row-btns" style="margin-top:14px"><button class="btn primary block" id="btnPickPdf">📄 选择课表 PDF</button></div>' +
+        '<input type="file" id="pdfInput" accept="application/pdf,.pdf" class="sr">' +
+        '<div id="previewBox"></div>';
+    } else if (tab === 'paste') {
       body =
         '<div class="tip"><b>从教务系统 / 学教一体化复制课表：</b><ol>' +
         '<li>电脑上打开课表页面，选中整张课表（或整个页面）复制；</li>' +
@@ -570,11 +582,11 @@
         '<div id="previewBox"></div>';
     } else if (tab === 'file') {
       body =
-        '<div class="tip"><b>支持文件：</b>' + '<span class="chip">.html</span><span class="chip">.htm</span><span class="chip">.csv</span><span class="chip">.tsv</span><span class="chip">.txt</span><span class="chip">.json（备份）</span>' +
-        '<div style="margin-top:8px">最稳的办法：在课表页面按 <b>Ctrl+S 另存为「网页，仅 HTML」</b>，把那个 .html 文件选进来。</div>' +
+        '<div class="tip"><b>支持文件：</b>' + '<span class="chip">.pdf 课表</span><span class="chip">.html</span><span class="chip">.htm</span><span class="chip">.csv</span><span class="chip">.tsv</span><span class="chip">.txt</span><span class="chip">.json（备份）</span>' +
+        '<div style="margin-top:8px">课表 PDF 直接选进来即可（会自动走 PDF 解析）；网页最稳的办法是按 <b>Ctrl+S 另存为「网页，仅 HTML」</b>。</div>' +
         '<div style="margin-top:6px">Excel 的 .xlsx 不直接支持 —— 在 Excel 里全选复制，用「粘贴导入」即可。</div></div>' +
         '<div class="row-btns" style="margin-top:14px"><button class="btn primary block" id="btnPick">选择文件</button></div>' +
-        '<input type="file" id="fileInput" accept=".html,.htm,.txt,.csv,.tsv,.json,.xls,.xlsx" class="sr">' +
+        '<input type="file" id="fileInput" accept=".pdf,.html,.htm,.txt,.csv,.tsv,.json,.xls,.xlsx" class="sr">' +
         '<div id="previewBox"></div>';
     } else {
       body =
@@ -592,8 +604,68 @@
       '<div class="row-btns" style="margin-top:18px"><button class="btn block" id="btnManual">＋ 手动添加一节课</button></div>';
   }
 
+  /** 解析 PDF 文件并出预览 */
+  function parsePdfFile(file, box) {
+    if (!file) return;
+    if (!/\.pdf$/i.test(file.name || '') && file.type !== 'application/pdf') {
+      box.innerHTML = '<div class="tip" style="margin-top:14px;border:1px solid var(--danger)">请选择 .pdf 文件</div>';
+      return;
+    }
+    if (!window.CourseTablePdf) {
+      box.innerHTML = '<div class="tip" style="margin-top:14px;border:1px solid var(--danger)">PDF 模块没加载（页面不完整）</div>';
+      return;
+    }
+    box.innerHTML = '<div class="tip" style="margin-top:14px">正在解析 PDF（' + esc((file.size / 1024).toFixed(0)) + ' KB）…</div>';
+    var reader = new FileReader();
+    reader.onload = function () {
+      window.CourseTablePdf.parse(reader.result).then(function (res) {
+        if (!res.ok) {
+          box.innerHTML = '<div class="tip" style="margin-top:14px;border:1px solid var(--danger)"><b>没解析出来：</b>' +
+            esc(res.reason || '未知原因') +
+            '<div style="margin-top:6px">可以试试：<br>1. 确认是教务系统导出的<b>矢量 PDF</b>（能选中文字），不是拍照/扫描件；<br>2. 改用「粘贴导入」或手动添加。</div></div>';
+          return;
+        }
+        var html = '<div class="tip" style="margin-top:14px"><b>从 PDF 解析到 ' + res.courses.length + ' 条上课记录</b>' +
+          '<span style="color:var(--text-3)">（' + res.pageCount + ' 页，按每次上课逐条）</span>' +
+          '<div style="margin-top:6px">请核对：导入后每周看到的教师/地点是当周真实的。</div></div>' +
+          '<div class="preview-list">';
+        var byDay = ['一', '二', '三', '四', '五', '六', '日'];
+        res.courses.slice(0, 80).forEach(function (c) {
+          html += '<div class="preview-item"><div class="pday">周' + byDay[c.day - 1] + '<br><span style="font-size:10px">' + c.start + '-' + c.end + '节</span></div>' +
+            '<div><div class="pname">' + esc(c.name) + '</div><div class="pmeta">' +
+            esc([c.teacher, c.room, c.weeks.length > 6 ? ('共' + c.weeks.length + '周') : (c.weeks.map(function (w) { return w + '周'; }).join(','))].filter(Boolean).join(' · ')) +
+            '</div></div><div class="pmeta">' + (c.weeks[0] || '') + '</div></div>';
+        });
+        html += '</div>';
+        if (res.courses.length > 80) {
+          html += '<div class="pmeta" style="padding:6px">… 还有 ' + (res.courses.length - 80) + ' 条</div>';
+        }
+        html += '<div class="row-btns" style="margin-top:14px">' +
+          '<button class="btn" id="btnAppend">追加合并</button>' +
+          '<button class="btn primary" id="btnReplace">替换全部</button></div>';
+        box.innerHTML = html;
+        lastImport = res.courses.map(function (c) {
+          return {
+            name: c.name, teacher: c.teacher, room: c.room, day: c.day,
+            start: c.start, end: c.end, weeks: c.weeks, note: c.note
+          };
+        });
+        $('#btnReplace', box).onclick = function () { applyImport(lastImport, true); };
+        $('#btnAppend', box).onclick = function () { applyImport(lastImport, false); };
+      }).catch(function (err) {
+        box.innerHTML = '<div class="tip" style="margin-top:14px;border:1px solid var(--danger)"><b>PDF 解析失败：</b>' +
+          esc(String(err && err.message || err)) +
+          '<div style="margin-top:6px">老版本浏览器可能不支持 PDF 解压，试试更新系统浏览器，或改用「粘贴导入」。</div></div>';
+      });
+    };
+    reader.onerror = function () {
+      box.innerHTML = '<div class="tip" style="margin-top:14px;border:1px solid var(--danger)">读取文件失败</div>';
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
   function openImport(tab) {
-    tab = tab || 'paste';
+    tab = tab || 'pdf';
     openSheet('导入课表', importSheetHtml(tab), function (body) {
       $all('.import-tabs button', body).forEach(function (b) {
         b.onclick = function () { openImport(b.dataset.tab); };
@@ -620,12 +692,24 @@
         parseAndPreview($('#importText', body).value, body);
       };
 
+      // PDF 课表
+      var pickPdf = $('#btnPickPdf', body);
+      var pdfIn = $('#pdfInput', body);
+      if (pickPdf && pdfIn) {
+        pickPdf.onclick = function () { pdfIn.click(); };
+        pdfIn.onchange = function () {
+          var f = pdfIn.files && pdfIn.files[0];
+          if (f) parsePdfFile(f, $('#previewBox', body));
+        };
+      }
+
       var pick = $('#btnPick', body);
       if (pick) pick.onclick = function () { $('#fileInput', body).click(); };
       var fi = $('#fileInput', body);
       if (fi) fi.onchange = function () {
         var f = fi.files && fi.files[0];
         if (!f) return;
+        if (/\.pdf$/i.test(f.name)) { parsePdfFile(f, $('#previewBox', body)); return; }
         if (/\.(xlsx|xls)$/i.test(f.name)) { toast('xlsx 请先在 Excel 里全选复制，用「粘贴导入」'); return; }
         var reader = new FileReader();
         reader.onload = function () {
@@ -999,7 +1083,7 @@
     $('#btnPrevWeek').onclick = function () { changeWeek(-1); };
     $('#btnNextWeek').onclick = function () { changeWeek(1); };
     $('#btnWeekLabel').onclick = gotoToday;
-    $('#btnImport').onclick = function () { openImport('paste'); };
+    $('#btnImport').onclick = function () { openImport('pdf'); };
     $('#btnSettings').onclick = openSettings;
     $('#btnToday').onclick = gotoToday;
     $('#mask').onclick = closeSheet;

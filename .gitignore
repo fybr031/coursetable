@@ -11,3 +11,7 @@ gh-token.txt
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 课表 PDF 与本地截图（含个人信息，绝不提交）
+*.pdf
+课表导入后*.png
