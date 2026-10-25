@@ -1,5 +1,5 @@
 /* Service Worker：外壳离线缓存 */
-const CACHE = 'coursetable-v1.0.0';
+const CACHE = 'coursetable-v1.1.0';
 const ASSETS = [
   './',
   './index.html',
