@@ -6,8 +6,9 @@
   'use strict';
 
   var P = window.CourseParser;
+  var V = window.CourseTableValidate;
   var STORE_KEY = 'coursetable.v1';
-  var APP_VERSION = '1.1.0';
+  var APP_VERSION = '1.2.0';
 
   var WD_SHORT = ['一', '二', '三', '四', '五', '六', '日'];
   var WD_FULL = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -133,7 +134,8 @@
       end: end,
       weeks: Array.isArray(raw.weeks) && raw.weeks.length ? uniqNum(raw.weeks) : null,
       note: String(raw.note || '').trim().slice(0, 200),
-      color: /^#[0-9a-f]{3,8}$/i.test(raw.color || '') ? raw.color : null
+      color: /^#[0-9a-f]{3,8}$/i.test(raw.color || '') ? raw.color : null,
+      confirmed: raw.confirmed === true
     };
   }
 
@@ -287,7 +289,9 @@
     var a = hm2min(t.a), b = hm2min(t.b);
     var running = isToday && a >= 0 && b >= 0 && now >= a && now <= b;
     var past = isToday && b >= 0 && now > b;
+    var f = flags()[c.id];
     var tag = running ? '<span class="tag">进行中</span>' : '';
+    var warn = f ? '<span class="tag warn" title="' + esc(f.reasons.join('；')) + '">⚠ 待确认</span>' : '';
     var meta = [];
     if (c.teacher) meta.push('<i>👤 ' + esc(c.teacher) + '</i>');
     if (c.room) meta.push('<i>📍 ' + esc(c.room) + '</i>');
@@ -295,7 +299,7 @@
       '<div class="lesson-time"><b>' + c.start + (c.end !== c.start ? '-' + c.end : '') + '节</b>' +
       '<em>' + t.a + '</em><em>' + t.b + '</em></div>' +
       '<div class="lesson-body">' +
-      '<div class="lesson-name">' + esc(c.name) + tag + '</div>' +
+      '<div class="lesson-name">' + esc(c.name) + tag + warn + '</div>' +
       (meta.length ? '<div class="lesson-meta">' + meta.join('') + '</div>' : '') +
       '<div class="lesson-week">' + esc(weeksText(c.weeks)) + (c.note ? ' · ' + esc(c.note) : '') + '</div>' +
       '</div></div>';
@@ -367,7 +371,7 @@
         var e = clamp(c.end, s, rows);
         var t = slotTime(c.start, c.end);
         html += '<div class="wk-course" data-id="' + c.id + '" style="grid-column:' + (day + 1) + ';grid-row:' + (s + 1) + ' / ' + (e + 2) + ';--c:' + colorFor(c) + '">' +
-          '<b>' + esc(c.name) + '</b>' +
+          '<b>' + (flags()[c.id] ? '⚠ ' : '') + esc(c.name) + '</b>' +
           (c.room ? '<span>@' + esc(c.room) + '</span>' : '') +
           '<span>' + t.a + '</span></div>';
       });
@@ -377,6 +381,25 @@
     $all('.wk-course', el).forEach(function (node) {
       node.onclick = function () { openCourseDetail(node.dataset.id); };
     });
+  }
+
+  /** 「待确认」标记：解析可疑 + 时间冲突；人工确认过的自动跳过 */
+  var flagCache = { key: '', map: {} };
+  function flags() {
+    if (!V) return {};
+    var key = state.courses.length + '|' + state.settings.totalWeeks + '|' + state.courses.map(function (c) {
+      return c.id + (c.confirmed ? 'c' : '') + c.start + '-' + c.end + '[' + (c.weeks || []).join(',') + ']' + c.name;
+    }).join(';');
+    if (key !== flagCache.key) {
+      flagCache.key = key;
+      flagCache.map = V.annotate(state.courses, Math.max(state.settings.totalWeeks || 20, 20));
+    }
+    return flagCache.map;
+  }
+  function flagCount() {
+    var f = flags(), n = 0;
+    for (var k in f) n++;
+    return n;
   }
 
   function renderAll() {
@@ -429,11 +452,24 @@
     rows.slice(1).forEach(function (r) {
       html += '<div class="settings-row"><div class="label">' + esc(r[0]) + '</div><div style="color:var(--text-2);font-size:13px;text-align:right">' + esc(r[1]) + '</div></div>';
     });
+    var f = flags()[c.id];
+    if (f) {
+      html += '<div class="warn-box"><b>⚠ 这条课程需要你确认</b><ul>' +
+        f.reasons.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') +
+        '</ul><div class="warn-hint">确认无误后点「确认无误」标记就会消失；直接编辑保存也会自动清除。</div></div>';
+    }
     html += '</div><div class="row-btns" style="margin-top:16px">' +
+      (f ? '<button class="btn" id="btnConfirmCourse">✓ 确认无误</button>' : '') +
       '<button class="btn primary" id="btnEditCourse">编辑</button>' +
       '<button class="btn danger" id="btnDelCourse">删除</button></div>';
 
     openSheet('课程详情', html, function () {
+      var bc = $('#btnConfirmCourse');
+      if (bc) bc.onclick = function () {
+        c.confirmed = true;
+        save(); closeSheet(); renderAll();
+        toast('已确认，标记已去掉');
+      };
       $('#btnEditCourse').onclick = function () { openEditor(c); };
       $('#btnDelCourse').onclick = function () {
         if (!confirm('确定删除「' + c.name + '」？')) return;
@@ -518,6 +554,7 @@
         }
         var data = normalizeCourse({
           id: c.id,
+          confirmed: true,
           name: name,
           teacher: $('#f_teacher').value,
           room: $('#f_room').value,
@@ -792,7 +829,8 @@
     if (first) state.day = first.day;
     state.week = clamp(currentWeekNo(), 1, state.settings.totalWeeks);
     renderAll();
-    toast('已导入 ' + list.length + ' 门课');
+    var needReview = flagCount();
+    toast('已导入 ' + list.length + ' 门课' + (needReview ? '，' + needReview + ' 条待确认' : ''));
   }
 
   function tryParseJson(text) {
@@ -828,6 +866,32 @@
     box.innerHTML = html;
     $('#btnReplace', box).onclick = function () { applyImport(lastImport, true); };
     $('#btnAppend', box).onclick = function () { applyImport(lastImport, false); };
+  }
+
+  /** 待确认课程列表：逐条查看 / 确认 */
+  function openReviewList() {
+    var f = flags();
+    var ids = Object.keys(f);
+    if (!ids.length) { toast('没有待确认的课程'); return; }
+    var html = '<div class="tip">这些课程可能是解析错位、信息缺失或时间冲突。点进去核对：' +
+      '内容对就点「确认无误」，不对就点「编辑」改掉（改完也会自动去掉标记）。</div><div class="preview-list">';
+    ids.forEach(function (id) {
+      var c = findCourse(id);
+      if (!c) return;
+      html += '<div class="preview-item" data-id="' + id + '">' +
+        '<div class="pday">' + WD_FULL[c.day - 1] + '<br><span style="font-size:10px">' + c.start + '-' + c.end + '节</span></div>' +
+        '<div><div class="pname">' + esc(c.name) + '</div><div class="pmeta">' + esc(f[id].reasons.join('；')) + '</div></div>' +
+        '<div class="pmeta">查看</div></div>';
+    });
+    html += '</div>';
+    openSheet('待确认课程（' + ids.length + '）', html, function (body) {
+      $all('.preview-item', body).forEach(function (item) {
+        item.onclick = function () {
+          closeSheet();
+          setTimeout(function () { openCourseDetail(item.dataset.id); }, 260);
+        };
+      });
+    });
   }
 
   /* ---------------- 剪贴板 ---------------- */
@@ -903,6 +967,8 @@
       '<div class="hint">只影响显示，不影响课表本身。改了记得保存。</div></div>' +
       '<div class="row-btns"><button class="btn" id="btnAddPeriod">＋ 加一节课</button><button class="btn" id="btnDelPeriod">－ 减一节</button></div>' +
       '<div style="height:18px"></div>' +
+      '<div class="settings-row"><div><div class="label">待确认的课程</div><div class="desc">解析可疑或时间冲突，需要你核对</div></div>' +
+      '<button class="btn sm' + (flagCount() ? ' danger' : '') + '" id="btnReview">' + (flagCount() ? flagCount() + ' 条' : '无') + '</button></div>' +
       '<div class="settings-row"><div><div class="label">导出备份</div><div class="desc">存成 .json 文件，换手机/重装可恢复</div></div>' +
       '<button class="btn sm" id="btnExport">导出</button></div>' +
       '<div class="settings-row"><div><div class="label">复制备份到剪贴板</div><div class="desc">方便发给自己微信收藏</div></div>' +
@@ -939,6 +1005,7 @@
         if (rows.length <= 1) return;
         rows[rows.length - 1].remove();
       };
+      $('#btnReview', body).onclick = function () { closeSheet(); setTimeout(openReviewList, 260); };
       $('#btnExport', body).onclick = exportFile;
       $('#btnCopyJson', body).onclick = async function () {
         var ok = await copyText(buildJson());
@@ -1106,8 +1173,42 @@
     if (!('serviceWorker' in navigator)) return;
     if (!/^https?:$/.test(location.protocol)) return;
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('sw.js').catch(function () { /* 忽略 */ });
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
+        // 每次打开都主动检查一次 SW 更新，避免停留在旧缓存
+        if (reg && reg.update) reg.update().catch(function () {});
+      }).catch(function () { /* 忽略 */ });
     });
+  }
+
+  /** 检查线上版本：发现更新就提示刷新（彻底解决"打开还是旧版"） */
+  function checkNewVersion() {
+    if (!/^https?:$/.test(location.protocol)) return;
+    fetch('version.json?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || !j.version || j.version === APP_VERSION) return;
+        showUpdateBar(j.version);
+      })
+      .catch(function () {});
+  }
+
+  function showUpdateBar(ver) {
+    if ($('#updateBar')) return;
+    var bar = document.createElement('div');
+    bar.id = 'updateBar';
+    bar.className = 'update-bar';
+    bar.innerHTML = '<span>有新版本 v' + esc(ver) + '</span><button id="btnDoUpdate">立即刷新</button>';
+    document.body.appendChild(bar);
+    $('#btnDoUpdate').onclick = function () {
+      var done = function () { location.reload(); };
+      try {
+        if (window.caches && caches.keys) {
+          caches.keys().then(function (ks) {
+            return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+          }).then(done, done);
+        } else done();
+      } catch (e) { done(); }
+    };
   }
 
   /* ---------------- 启动 ---------------- */
@@ -1128,6 +1229,10 @@
     } catch (e) { /* ignore */ }
     renderAll();
     registerSW();
+    checkNewVersion();
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') checkNewVersion();
+    });
     if (!storeOk) {
       setTimeout(function () { toast('浏览器禁止本地存储，数据可能丢失，请用设置里的导出备份'); }, 800);
     }
@@ -1145,6 +1250,9 @@
     openEditor: openEditor,
     openCourseDetail: openCourseDetail,
     seedDemo: seedDemo,
+    flags: flags,
+    flagCount: flagCount,
+    openReviewList: openReviewList,
     demoCourses: demoCourses,
     applyImport: applyImport,
     buildJson: buildJson,

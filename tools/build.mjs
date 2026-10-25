@@ -16,7 +16,7 @@ const exist = (p) => fs.existsSync(path.join(ROOT, p));
 /* ---------- 自检 ---------- */
 const REQUIRED = [
   'index.html', 'manifest.webmanifest', 'sw.js',
-  'assets/app.css', 'assets/app.js', 'assets/parser.js', 'assets/pdf-import.js',
+  'assets/app.css', 'assets/app.js', 'assets/parser.js', 'assets/pdf-import.js', 'assets/validate.js', 'version.json',
   'assets/icons/icon-192.png', 'assets/icons/icon-512.png',
   'assets/icons/maskable-512.png', 'assets/icons/apple-touch-icon.png',
   'assets/icons/favicon.svg'
@@ -33,6 +33,7 @@ const html = read('index.html');
 const css = read('assets/app.css');
 const parser = read('assets/parser.js');
 const pdfImport = read('assets/pdf-import.js');
+const validate = read('assets/validate.js');
 const app = read('assets/app.js');
 
 const safe = (js) => js.replace(/<\/script/gi, '<\\/script');
@@ -43,17 +44,23 @@ const pngIcon = fs.readFileSync(path.join(ROOT, 'assets/icons/apple-touch-icon.p
 
 let out = html
   .replace(/<link rel="manifest"[^>]*>\s*/, '')
-  .replace(/<link rel="stylesheet" href="assets\/app\.css">/, '<style>\n' + css + '\n</style>')
+  .replace(/<link rel="stylesheet" href="assets\/app\.css(\?v=[^"]*)?">/, '<style>\n' + css + '\n</style>')
   .replace(/<link rel="icon" href="assets\/icons\/favicon\.svg" type="image\/svg\+xml">/,
     '<link rel="icon" href="data:image/svg+xml;base64,' + svgIcon.toString('base64') + '">')
   .replace(/<link rel="apple-touch-icon" href="assets\/icons\/apple-touch-icon\.png">/,
     '<link rel="apple-touch-icon" href="data:image/png;base64,' + pngIcon.toString('base64') + '">')
-  .replace(/<script src="assets\/parser\.js"><\/script>/, '<script>\n' + safe(parser) + '\n</script>')
-  .replace(/<script src="assets\/pdf-import\.js"><\/script>/, '<script>\n' + safe(pdfImport) + '\n</script>')
-  .replace(/<script src="assets\/app\.js"><\/script>/, '<script>\n' + safe(app) + '\n</script>');
+  .replace(/<script src="assets\/parser\.js(\?v=[^"]*)?"><\/script>/, '<script>\n' + safe(parser) + '\n</script>')
+  .replace(/<script src="assets\/pdf-import\.js(\?v=[^"]*)?"><\/script>/, '<script>\n' + safe(pdfImport) + '\n</script>')
+  .replace(/<script src="assets\/validate\.js(\?v=[^"]*)?"><\/script>/, '<script>\n' + safe(validate) + '\n</script>')
+  .replace(/<script src="assets\/app\.js(\?v=[^"]*)?"><\/script>/, '<script>\n' + safe(app) + '\n</script>');
 
 // 单文件版不需要 SW 与 manifest：去掉注册代码里的路径依赖（registerSW 已判断 http(s)，file:// 自动跳过）
 out = out.replace('<title>课程表</title>', '<title>课程表 · 单文件版</title>');
+
+const appVersion = (app.match(/APP_VERSION = '([^']+)'/) || [])[1] || '0.0.0';
+const versionJson = JSON.stringify({ version: appVersion, builtAt: new Date().toISOString() });
+fs.writeFileSync(path.join(ROOT, 'version.json'), versionJson + '\n', 'utf8');
+console.log('✓ version.json  version=' + appVersion);
 
 fs.mkdirSync(path.join(ROOT, 'dist'), { recursive: true });
 const outFile = path.join(ROOT, 'dist', '课程表.html');

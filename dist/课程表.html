@@ -506,6 +506,56 @@ input, select, textarea { font: inherit; color: inherit; }
   .week-label { min-width: 112px; }
 }
 
+/* ---------------- 待确认标记 ---------------- */
+.tag.warn {
+  background: #fff3d6;
+  color: #b26a00;
+}
+.warn-box {
+  margin-top: 14px;
+  border: 1px solid #f0b34a;
+  background: #fffaf0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: #8a5a00;
+}
+.warn-box b { display: block; margin-bottom: 4px; color: #b26a00; }
+.warn-box ul { margin: 0; padding-left: 18px; }
+.warn-box li { margin: 2px 0; }
+.warn-hint { margin-top: 6px; color: var(--text-3); }
+
+@media (prefers-color-scheme: dark) {
+  .tag.warn { background: #3a2c12; color: #ffb84d; }
+  .warn-box { border-color: #7a5a1e; background: #2a2110; color: #f0c674; }
+  .warn-box b { color: #ffcb66; }
+}
+
+.update-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--safe-b) + 64px);
+  transform: translateX(-50%);
+  background: #1f2a44;
+  color: #fff;
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  box-shadow: var(--shadow-lg);
+  z-index: 70;
+}
+.update-bar button {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
 </style>
 </head>
 <body>
@@ -1745,6 +1795,126 @@ input, select, textarea { font: inherit; color: inherit; }
 
 </script>
 <script>
+/*!
+ * 课程数据校验 CourseTableValidate v1.0
+ * 纯函数，无依赖，可在浏览器与 Node 中测试。
+ *
+ * 用途：
+ *   1. detectSuspect(course)   —— 单条课程本身是否可疑（解析可能出错）
+ *   2. detectConflicts(list)   —— 多条课程之间是否时间冲突（同天 + 节次重叠 + 周次有交集）
+ *   3. annotate(list, maxWeek)  —— 汇总成 { id: { kind, reasons } }
+ * 人工确认过的课程（course.confirmed === true）不再打标记。
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.CourseTableValidate = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  var DETAIL_WORDS = /(校区|场地|教师|教学班|选课备注|课备注):/;
+  var LEADING_JUNK = /^(注|备注|班|组成|学班|学组成)[:：]/;
+
+  /** 单条课程的可疑点（返回原因数组，无问题返回 null） */
+  function detectSuspect(c) {
+    if (!c) return ['课程数据为空'];
+    var reasons = [];
+
+    var name = String(c.name || '').trim();
+    if (!name) {
+      reasons.push('课程名为空');
+    } else {
+      if (name.length > 30) reasons.push('课程名过长（可能混入了其它内容）');
+      if (/[:：\/]/.test(name)) reasons.push('课程名含「:」或「/」，疑似解析错位');
+      if (DETAIL_WORDS.test(name)) reasons.push('课程名混入了教师/场地等字段');
+      if (LEADING_JUNK.test(name)) reasons.push('课程名以「注/组成」等开头，疑似被截断');
+      if (/^[\d\W]+$/.test(name)) reasons.push('课程名缺少文字');
+    }
+
+    if (!String(c.teacher || '').trim() && !String(c.room || '').trim()) {
+      reasons.push('没有教师和地点');
+    }
+
+    if (!(c.start >= 1) || !(c.end >= c.start)) reasons.push('节次异常');
+    if (c.end > 20 || c.start > 20) reasons.push('节次超出范围');
+
+    if (!(c.day >= 1 && c.day <= 7)) reasons.push('星期异常');
+
+    return reasons.length ? reasons : null;
+  }
+
+  /** 把 weeks 展开成集合；没有周次时按 1..maxWeek 视作每周 */
+  function weekSet(c, maxWeek) {
+    var set = {};
+    if (Array.isArray(c.weeks) && c.weeks.length) {
+      c.weeks.forEach(function (w) { set[w] = 1; });
+    } else {
+      for (var w = 1; w <= maxWeek; w++) set[w] = 1;
+    }
+    return set;
+  }
+
+  /**
+   * 两两检查冲突
+   * @returns {Object} id -> 原因数组
+   */
+  function detectConflicts(list, maxWeek) {
+    maxWeek = maxWeek || 20;
+    var out = {};
+    var n = list.length;
+    for (var i = 0; i < n; i++) {
+      for (var j = i + 1; j < n; j++) {
+        var a = list[i], b = list[j];
+        if (a.day !== b.day) continue;
+        if (a.start > b.end || b.start > a.end) continue;   // 节次不重叠
+
+        var sa = weekSet(a, maxWeek), sb = weekSet(b, maxWeek);
+        var weeks = [];
+        for (var w in sa) { if (sb[w]) weeks.push(+w); }
+        if (!weeks.length) continue;
+        weeks.sort(function (x, y) { return x - y; });
+
+        var short = weeks.length > 4 ? (weeks.slice(0, 4).join('、') + ' 等 ' + weeks.length + ' 周') : (weeks.join('、') + ' 周');
+        (out[a.id] = out[a.id] || []).push('与「' + b.name + '」时间冲突（第 ' + short + '）');
+        (out[b.id] = out[b.id] || []).push('与「' + a.name + '」时间冲突（第 ' + short + '）');
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 汇总标记
+   * @returns {Object} id -> { kind: 'conflict'|'suspect'|'both', reasons: [] }
+   */
+  function annotate(list, maxWeek) {
+    var conflicts = detectConflicts(list, maxWeek);
+    var result = {};
+    list.forEach(function (c) {
+      if (!c || c.confirmed === true) return;   // 人工确认过的不再标记
+      var reasons = [];
+      var suspect = detectSuspect(c);
+      var conflict = conflicts[c.id] || [];
+      if (suspect) reasons = reasons.concat(suspect);
+      if (conflict.length) reasons = reasons.concat(conflict);
+      if (!reasons.length) return;
+      result[c.id] = {
+        kind: suspect && conflict.length ? 'both' : (conflict.length ? 'conflict' : 'suspect'),
+        reasons: reasons
+      };
+    });
+    return result;
+  }
+
+  return {
+    version: '1.0',
+    detectSuspect: detectSuspect,
+    detectConflicts: detectConflicts,
+    annotate: annotate,
+    weekSet: weekSet
+  };
+});
+
+</script>
+<script>
 /* ============================================================
    课程表 App  ·  逻辑层
    依赖：assets/parser.js（CourseParser）
@@ -1753,8 +1923,9 @@ input, select, textarea { font: inherit; color: inherit; }
   'use strict';
 
   var P = window.CourseParser;
+  var V = window.CourseTableValidate;
   var STORE_KEY = 'coursetable.v1';
-  var APP_VERSION = '1.1.0';
+  var APP_VERSION = '1.2.0';
 
   var WD_SHORT = ['一', '二', '三', '四', '五', '六', '日'];
   var WD_FULL = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
@@ -1880,7 +2051,8 @@ input, select, textarea { font: inherit; color: inherit; }
       end: end,
       weeks: Array.isArray(raw.weeks) && raw.weeks.length ? uniqNum(raw.weeks) : null,
       note: String(raw.note || '').trim().slice(0, 200),
-      color: /^#[0-9a-f]{3,8}$/i.test(raw.color || '') ? raw.color : null
+      color: /^#[0-9a-f]{3,8}$/i.test(raw.color || '') ? raw.color : null,
+      confirmed: raw.confirmed === true
     };
   }
 
@@ -2034,7 +2206,9 @@ input, select, textarea { font: inherit; color: inherit; }
     var a = hm2min(t.a), b = hm2min(t.b);
     var running = isToday && a >= 0 && b >= 0 && now >= a && now <= b;
     var past = isToday && b >= 0 && now > b;
+    var f = flags()[c.id];
     var tag = running ? '<span class="tag">进行中</span>' : '';
+    var warn = f ? '<span class="tag warn" title="' + esc(f.reasons.join('；')) + '">⚠ 待确认</span>' : '';
     var meta = [];
     if (c.teacher) meta.push('<i>👤 ' + esc(c.teacher) + '</i>');
     if (c.room) meta.push('<i>📍 ' + esc(c.room) + '</i>');
@@ -2042,7 +2216,7 @@ input, select, textarea { font: inherit; color: inherit; }
       '<div class="lesson-time"><b>' + c.start + (c.end !== c.start ? '-' + c.end : '') + '节</b>' +
       '<em>' + t.a + '</em><em>' + t.b + '</em></div>' +
       '<div class="lesson-body">' +
-      '<div class="lesson-name">' + esc(c.name) + tag + '</div>' +
+      '<div class="lesson-name">' + esc(c.name) + tag + warn + '</div>' +
       (meta.length ? '<div class="lesson-meta">' + meta.join('') + '</div>' : '') +
       '<div class="lesson-week">' + esc(weeksText(c.weeks)) + (c.note ? ' · ' + esc(c.note) : '') + '</div>' +
       '</div></div>';
@@ -2114,7 +2288,7 @@ input, select, textarea { font: inherit; color: inherit; }
         var e = clamp(c.end, s, rows);
         var t = slotTime(c.start, c.end);
         html += '<div class="wk-course" data-id="' + c.id + '" style="grid-column:' + (day + 1) + ';grid-row:' + (s + 1) + ' / ' + (e + 2) + ';--c:' + colorFor(c) + '">' +
-          '<b>' + esc(c.name) + '</b>' +
+          '<b>' + (flags()[c.id] ? '⚠ ' : '') + esc(c.name) + '</b>' +
           (c.room ? '<span>@' + esc(c.room) + '</span>' : '') +
           '<span>' + t.a + '</span></div>';
       });
@@ -2124,6 +2298,25 @@ input, select, textarea { font: inherit; color: inherit; }
     $all('.wk-course', el).forEach(function (node) {
       node.onclick = function () { openCourseDetail(node.dataset.id); };
     });
+  }
+
+  /** 「待确认」标记：解析可疑 + 时间冲突；人工确认过的自动跳过 */
+  var flagCache = { key: '', map: {} };
+  function flags() {
+    if (!V) return {};
+    var key = state.courses.length + '|' + state.settings.totalWeeks + '|' + state.courses.map(function (c) {
+      return c.id + (c.confirmed ? 'c' : '') + c.start + '-' + c.end + '[' + (c.weeks || []).join(',') + ']' + c.name;
+    }).join(';');
+    if (key !== flagCache.key) {
+      flagCache.key = key;
+      flagCache.map = V.annotate(state.courses, Math.max(state.settings.totalWeeks || 20, 20));
+    }
+    return flagCache.map;
+  }
+  function flagCount() {
+    var f = flags(), n = 0;
+    for (var k in f) n++;
+    return n;
   }
 
   function renderAll() {
@@ -2176,11 +2369,24 @@ input, select, textarea { font: inherit; color: inherit; }
     rows.slice(1).forEach(function (r) {
       html += '<div class="settings-row"><div class="label">' + esc(r[0]) + '</div><div style="color:var(--text-2);font-size:13px;text-align:right">' + esc(r[1]) + '</div></div>';
     });
+    var f = flags()[c.id];
+    if (f) {
+      html += '<div class="warn-box"><b>⚠ 这条课程需要你确认</b><ul>' +
+        f.reasons.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') +
+        '</ul><div class="warn-hint">确认无误后点「确认无误」标记就会消失；直接编辑保存也会自动清除。</div></div>';
+    }
     html += '</div><div class="row-btns" style="margin-top:16px">' +
+      (f ? '<button class="btn" id="btnConfirmCourse">✓ 确认无误</button>' : '') +
       '<button class="btn primary" id="btnEditCourse">编辑</button>' +
       '<button class="btn danger" id="btnDelCourse">删除</button></div>';
 
     openSheet('课程详情', html, function () {
+      var bc = $('#btnConfirmCourse');
+      if (bc) bc.onclick = function () {
+        c.confirmed = true;
+        save(); closeSheet(); renderAll();
+        toast('已确认，标记已去掉');
+      };
       $('#btnEditCourse').onclick = function () { openEditor(c); };
       $('#btnDelCourse').onclick = function () {
         if (!confirm('确定删除「' + c.name + '」？')) return;
@@ -2265,6 +2471,7 @@ input, select, textarea { font: inherit; color: inherit; }
         }
         var data = normalizeCourse({
           id: c.id,
+          confirmed: true,
           name: name,
           teacher: $('#f_teacher').value,
           room: $('#f_room').value,
@@ -2539,7 +2746,8 @@ input, select, textarea { font: inherit; color: inherit; }
     if (first) state.day = first.day;
     state.week = clamp(currentWeekNo(), 1, state.settings.totalWeeks);
     renderAll();
-    toast('已导入 ' + list.length + ' 门课');
+    var needReview = flagCount();
+    toast('已导入 ' + list.length + ' 门课' + (needReview ? '，' + needReview + ' 条待确认' : ''));
   }
 
   function tryParseJson(text) {
@@ -2575,6 +2783,32 @@ input, select, textarea { font: inherit; color: inherit; }
     box.innerHTML = html;
     $('#btnReplace', box).onclick = function () { applyImport(lastImport, true); };
     $('#btnAppend', box).onclick = function () { applyImport(lastImport, false); };
+  }
+
+  /** 待确认课程列表：逐条查看 / 确认 */
+  function openReviewList() {
+    var f = flags();
+    var ids = Object.keys(f);
+    if (!ids.length) { toast('没有待确认的课程'); return; }
+    var html = '<div class="tip">这些课程可能是解析错位、信息缺失或时间冲突。点进去核对：' +
+      '内容对就点「确认无误」，不对就点「编辑」改掉（改完也会自动去掉标记）。</div><div class="preview-list">';
+    ids.forEach(function (id) {
+      var c = findCourse(id);
+      if (!c) return;
+      html += '<div class="preview-item" data-id="' + id + '">' +
+        '<div class="pday">' + WD_FULL[c.day - 1] + '<br><span style="font-size:10px">' + c.start + '-' + c.end + '节</span></div>' +
+        '<div><div class="pname">' + esc(c.name) + '</div><div class="pmeta">' + esc(f[id].reasons.join('；')) + '</div></div>' +
+        '<div class="pmeta">查看</div></div>';
+    });
+    html += '</div>';
+    openSheet('待确认课程（' + ids.length + '）', html, function (body) {
+      $all('.preview-item', body).forEach(function (item) {
+        item.onclick = function () {
+          closeSheet();
+          setTimeout(function () { openCourseDetail(item.dataset.id); }, 260);
+        };
+      });
+    });
   }
 
   /* ---------------- 剪贴板 ---------------- */
@@ -2650,6 +2884,8 @@ input, select, textarea { font: inherit; color: inherit; }
       '<div class="hint">只影响显示，不影响课表本身。改了记得保存。</div></div>' +
       '<div class="row-btns"><button class="btn" id="btnAddPeriod">＋ 加一节课</button><button class="btn" id="btnDelPeriod">－ 减一节</button></div>' +
       '<div style="height:18px"></div>' +
+      '<div class="settings-row"><div><div class="label">待确认的课程</div><div class="desc">解析可疑或时间冲突，需要你核对</div></div>' +
+      '<button class="btn sm' + (flagCount() ? ' danger' : '') + '" id="btnReview">' + (flagCount() ? flagCount() + ' 条' : '无') + '</button></div>' +
       '<div class="settings-row"><div><div class="label">导出备份</div><div class="desc">存成 .json 文件，换手机/重装可恢复</div></div>' +
       '<button class="btn sm" id="btnExport">导出</button></div>' +
       '<div class="settings-row"><div><div class="label">复制备份到剪贴板</div><div class="desc">方便发给自己微信收藏</div></div>' +
@@ -2686,6 +2922,7 @@ input, select, textarea { font: inherit; color: inherit; }
         if (rows.length <= 1) return;
         rows[rows.length - 1].remove();
       };
+      $('#btnReview', body).onclick = function () { closeSheet(); setTimeout(openReviewList, 260); };
       $('#btnExport', body).onclick = exportFile;
       $('#btnCopyJson', body).onclick = async function () {
         var ok = await copyText(buildJson());
@@ -2853,8 +3090,42 @@ input, select, textarea { font: inherit; color: inherit; }
     if (!('serviceWorker' in navigator)) return;
     if (!/^https?:$/.test(location.protocol)) return;
     window.addEventListener('load', function () {
-      navigator.serviceWorker.register('sw.js').catch(function () { /* 忽略 */ });
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
+        // 每次打开都主动检查一次 SW 更新，避免停留在旧缓存
+        if (reg && reg.update) reg.update().catch(function () {});
+      }).catch(function () { /* 忽略 */ });
     });
+  }
+
+  /** 检查线上版本：发现更新就提示刷新（彻底解决"打开还是旧版"） */
+  function checkNewVersion() {
+    if (!/^https?:$/.test(location.protocol)) return;
+    fetch('version.json?t=' + Date.now(), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || !j.version || j.version === APP_VERSION) return;
+        showUpdateBar(j.version);
+      })
+      .catch(function () {});
+  }
+
+  function showUpdateBar(ver) {
+    if ($('#updateBar')) return;
+    var bar = document.createElement('div');
+    bar.id = 'updateBar';
+    bar.className = 'update-bar';
+    bar.innerHTML = '<span>有新版本 v' + esc(ver) + '</span><button id="btnDoUpdate">立即刷新</button>';
+    document.body.appendChild(bar);
+    $('#btnDoUpdate').onclick = function () {
+      var done = function () { location.reload(); };
+      try {
+        if (window.caches && caches.keys) {
+          caches.keys().then(function (ks) {
+            return Promise.all(ks.map(function (k) { return caches.delete(k); }));
+          }).then(done, done);
+        } else done();
+      } catch (e) { done(); }
+    };
   }
 
   /* ---------------- 启动 ---------------- */
@@ -2875,6 +3146,10 @@ input, select, textarea { font: inherit; color: inherit; }
     } catch (e) { /* ignore */ }
     renderAll();
     registerSW();
+    checkNewVersion();
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') checkNewVersion();
+    });
     if (!storeOk) {
       setTimeout(function () { toast('浏览器禁止本地存储，数据可能丢失，请用设置里的导出备份'); }, 800);
     }
@@ -2892,6 +3167,9 @@ input, select, textarea { font: inherit; color: inherit; }
     openEditor: openEditor,
     openCourseDetail: openCourseDetail,
     seedDemo: seedDemo,
+    flags: flags,
+    flagCount: flagCount,
+    openReviewList: openReviewList,
     demoCourses: demoCourses,
     applyImport: applyImport,
     buildJson: buildJson,
